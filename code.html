@@ -1,0 +1,744 @@
+import { useState, useEffect, useRef } from "react";
+import { RadarChart, Radar, PolarGrid, PolarAngleAxis, ResponsiveContainer, Tooltip } from "recharts";
+
+// ─── SCORING ──────────────────────────────────────────────────────────────────
+const WEIGHTS = { skills: 0.30, certifications: 0.15, projects: 0.25, experience: 0.20, resume: 0.10 };
+
+function computeScore(data) {
+  const profMap = { Beginner: 0.4, Intermediate: 0.7, Advanced: 1.0 };
+  const techScore = data.skills.technical.length === 0 ? 0
+    : Math.min(100, (data.skills.technical.reduce((s, sk) => s + (profMap[sk.level] || 0.5), 0) / data.skills.technical.length) * 100 * Math.min(data.skills.technical.length / 5, 1));
+  const softScore = Math.min(100, (data.skills.soft.length / 5) * 100);
+  const skillsScore = techScore * 0.7 + softScore * 0.3;
+  const certScore = Math.min(100, (data.certifications.length / 3) * 100);
+  const projScore = Math.min(100, (data.projects.length / 3) * 100);
+  const expScore = Math.min(100, (data.experience.length / 2) * 100);
+  const resumeScore = (Object.values(data.resume).filter(Boolean).length / Object.values(data.resume).length) * 100;
+  const total = skillsScore * WEIGHTS.skills + certScore * WEIGHTS.certifications + projScore * WEIGHTS.projects + expScore * WEIGHTS.experience + resumeScore * WEIGHTS.resume;
+  return {
+    total: Math.round(total),
+    breakdown: {
+      skills: Math.round(skillsScore),
+      certifications: Math.round(certScore),
+      projects: Math.round(projScore),
+      experience: Math.round(expScore),
+      resume: Math.round(resumeScore),
+    },
+  };
+}
+
+function getSuggestions(data, bd) {
+  const s = [];
+  if (data.skills.technical.length < 3) s.push({ icon: "⚡", color: "#4F46E5", text: "Add at least 3 technical skills with proficiency levels." });
+  if (data.skills.soft.length < 3) s.push({ icon: "🤝", color: "#06B6D4", text: "List 3+ soft skills — communication & leadership matter." });
+  if (data.certifications.length < 2) s.push({ icon: "🏅", color: "#8B5CF6", text: "Earn 1–2 industry certifications to stand out." });
+  if (data.projects.length < 2) s.push({ icon: "🚀", color: "#F59E0B", text: "Showcase at least 2 projects with GitHub links." });
+  if (data.experience.length === 0) s.push({ icon: "💼", color: "#10B981", text: "Apply for internships to build real-world experience." });
+  if (bd.resume < 80) s.push({ icon: "📄", color: "#EF4444", text: "Complete all resume sections for maximum recruiter impact." });
+  if (s.length === 0) s.push({ icon: "🌟", color: "#10B981", text: "Exceptional profile! Apply confidently to top positions." });
+  return s;
+}
+
+const STEPS = [
+  { id: "skills",     icon: "⚡", label: "Skills",         desc: "Technical & soft skills",     accent: "#4F46E5", light: "#EEF2FF", border: "#C7D2FE" },
+  { id: "certs",      icon: "🏅", label: "Certifications", desc: "Credentials & badges",         accent: "#06B6D4", light: "#ECFEFF", border: "#A5F3FC" },
+  { id: "projects",   icon: "🚀", label: "Projects",       desc: "Portfolio & side projects",    accent: "#8B5CF6", light: "#F5F3FF", border: "#DDD6FE" },
+  { id: "experience", icon: "💼", label: "Experience",     desc: "Internships & work history",   accent: "#10B981", light: "#ECFDF5", border: "#A7F3D0" },
+  { id: "resume",     icon: "📄", label: "Resume",         desc: "Completeness checklist",       accent: "#F59E0B", light: "#FFFBEB", border: "#FDE68A" },
+];
+
+const TECH_OPTIONS = ["JavaScript","TypeScript","Python","Java","C++","React","Vue","Angular","Node.js","Django","Flask","SQL","MongoDB","AWS","Docker","Kubernetes","Git","GraphQL","REST APIs","Machine Learning","TensorFlow","Redis","PostgreSQL","Figma","Swift"];
+const SOFT_OPTIONS = ["Communication","Teamwork","Problem Solving","Critical Thinking","Time Management","Leadership","Adaptability","Creativity","Attention to Detail","Conflict Resolution","Presentation","Emotional Intelligence"];
+
+const EMPTY = {
+  skills: { technical: [], soft: [] },
+  certifications: [],
+  projects: [],
+  experience: [],
+  resume: { education: false, skills: false, experience: false, projects: false, contact: false },
+};
+
+// ─── SHARED UI ────────────────────────────────────────────────────────────────
+function FInput({ label, value, onChange, placeholder, type = "text", accent = "#4F46E5" }) {
+  const [f, setF] = useState(false);
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: f ? accent : "#6B7280", letterSpacing: 1, textTransform: "uppercase", marginBottom: 7 }}>{label}</label>
+      <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+        onFocus={() => setF(true)} onBlur={() => setF(false)}
+        style={{ width: "100%", padding: "12px 16px", borderRadius: 10, border: `1.5px solid ${f ? accent : "#E5E7EB"}`,
+          background: f ? "#fff" : "#FAFAFA", color: "#111827", fontSize: 14, outline: "none", boxSizing: "border-box",
+          boxShadow: f ? `0 0 0 3px ${accent}18` : "none", transition: "all .18s" }} />
+    </div>
+  );
+}
+
+function FTextarea({ label, value, onChange, placeholder, accent = "#4F46E5" }) {
+  const [f, setF] = useState(false);
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: f ? accent : "#6B7280", letterSpacing: 1, textTransform: "uppercase", marginBottom: 7 }}>{label}</label>
+      <textarea value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} rows={3}
+        onFocus={() => setF(true)} onBlur={() => setF(false)}
+        style={{ width: "100%", padding: "12px 16px", borderRadius: 10, border: `1.5px solid ${f ? accent : "#E5E7EB"}`,
+          background: f ? "#fff" : "#FAFAFA", color: "#111827", fontSize: 14, outline: "none", resize: "vertical", boxSizing: "border-box",
+          boxShadow: f ? `0 0 0 3px ${accent}18` : "none", transition: "all .18s" }} />
+    </div>
+  );
+}
+
+function FSelect({ value, onChange, children, accent = "#4F46E5" }) {
+  const [f, setF] = useState(false);
+  return (
+    <select value={value} onChange={e => onChange(e.target.value)} onFocus={() => setF(true)} onBlur={() => setF(false)}
+      style={{ width: "100%", padding: "12px 16px", borderRadius: 10, border: `1.5px solid ${f ? accent : "#E5E7EB"}`,
+        background: "#FAFAFA", color: value ? "#111827" : "#9CA3AF", fontSize: 14, outline: "none", cursor: "pointer", boxSizing: "border-box",
+        boxShadow: f ? `0 0 0 3px ${accent}18` : "none", transition: "all .18s" }}>
+      {children}
+    </select>
+  );
+}
+
+function Pill({ label, sub, color, bg, borderC, onRemove }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 99,
+      background: bg, border: `1px solid ${borderC}`, color, fontSize: 13, fontWeight: 600, marginRight: 8, marginBottom: 8 }}>
+      {label}{sub && <span style={{ fontSize: 10, opacity: .65 }}>· {sub}</span>}
+      <span onClick={onRemove} style={{ cursor: "pointer", opacity: .55, fontSize: 16, lineHeight: 1, marginLeft: 2 }}>×</span>
+    </span>
+  );
+}
+
+function AddButton({ onClick, accent, children }) {
+  const [h, setH] = useState(false);
+  return (
+    <button onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
+      style={{ padding: "11px 22px", borderRadius: 10, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 13,
+        background: accent, color: "#fff",
+        boxShadow: h ? `0 4px 18px ${accent}55` : `0 2px 8px ${accent}30`,
+        transform: h ? "translateY(-1px)" : "none", transition: "all .18s" }}>
+      {children}
+    </button>
+  );
+}
+
+function NavButton({ onClick, children, variant = "primary", accent = "#4F46E5" }) {
+  const [h, setH] = useState(false);
+  if (variant === "ghost") return (
+    <button onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
+      style={{ padding: "12px 28px", borderRadius: 10, border: "1.5px solid #E5E7EB", cursor: "pointer", fontWeight: 600, fontSize: 14,
+        background: h ? "#F9FAFB" : "#fff", color: "#374151", transition: "all .18s" }}>
+      {children}
+    </button>
+  );
+  return (
+    <button onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
+      style={{ padding: "12px 28px", borderRadius: 10, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 14,
+        background: accent, color: "#fff",
+        boxShadow: h ? `0 6px 24px ${accent}55` : `0 3px 12px ${accent}35`,
+        transform: h ? "translateY(-1px)" : "none", transition: "all .18s" }}>
+      {children}
+    </button>
+  );
+}
+
+function ItemCard({ children, onRemove }) {
+  return (
+    <div style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 12, padding: "16px 20px",
+      marginBottom: 10, position: "relative", boxShadow: "0 1px 6px rgba(0,0,0,0.04)", animation: "fadeUp .25s ease both" }}>
+      {children}
+      <button onClick={onRemove}
+        style={{ position: "absolute", top: 12, right: 14, background: "none", border: "none", cursor: "pointer",
+          color: "#9CA3AF", fontSize: 18, lineHeight: 1, padding: "2px 4px", borderRadius: 6 }}>×</button>
+    </div>
+  );
+}
+
+function EmptyState({ icon, text }) {
+  return (
+    <div style={{ textAlign: "center", padding: "32px 20px", background: "#F9FAFB", borderRadius: 12, border: "1.5px dashed #E5E7EB" }}>
+      <div style={{ fontSize: 28, marginBottom: 8 }}>{icon}</div>
+      <div style={{ fontSize: 13, color: "#9CA3AF" }}>{text}</div>
+    </div>
+  );
+}
+
+// ─── ANIMATED COUNTER ─────────────────────────────────────────────────────────
+function AnimNum({ val }) {
+  const [n, setN] = useState(0);
+  const r = useRef();
+  useEffect(() => {
+    const from = n, start = Date.now();
+    clearInterval(r.current);
+    r.current = setInterval(() => {
+      const p = Math.min((Date.now() - start) / 900, 1);
+      setN(Math.round(from + (val - from) * (1 - Math.pow(1 - p, 3))));
+      if (p >= 1) clearInterval(r.current);
+    }, 16);
+    return () => clearInterval(r.current);
+  }, [val]);
+  return <>{n}</>;
+}
+
+// ─── DONUT CHART ──────────────────────────────────────────────────────────────
+function DonutChart({ score }) {
+  const radius = 80, stroke = 18, norm = 2 * Math.PI * radius;
+  const offset = norm - (score / 100) * norm;
+  const color = score <= 40 ? "#EF4444" : score <= 70 ? "#F59E0B" : "#10B981";
+  return (
+    <svg width={200} height={200} style={{ display: "block", margin: "0 auto" }}>
+      <defs>
+        <linearGradient id="donut-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#4F46E5" />
+          <stop offset="50%" stopColor="#8B5CF6" />
+          <stop offset="100%" stopColor="#06B6D4" />
+        </linearGradient>
+        <filter id="glow">
+          <feGaussianBlur stdDeviation="3" result="coloredBlur" />
+          <feMerge><feMergeNode in="coloredBlur" /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
+      </defs>
+      {/* Track */}
+      <circle cx={100} cy={100} r={radius} fill="none" stroke="#F3F4F6" strokeWidth={stroke} />
+      {/* Progress arc */}
+      <circle cx={100} cy={100} r={radius} fill="none"
+        stroke="url(#donut-grad)" strokeWidth={stroke}
+        strokeDasharray={norm} strokeDashoffset={offset}
+        strokeLinecap="round"
+        transform="rotate(-90 100 100)"
+        filter="url(#glow)"
+        style={{ transition: "stroke-dashoffset 1.2s cubic-bezier(.4,0,.2,1)" }} />
+      {/* Score text */}
+      <text x={100} y={92} textAnchor="middle" fontSize={36} fontWeight={900} fill="#111827" fontFamily="'DM Sans',sans-serif">
+        <AnimNum val={score} />
+      </text>
+      <text x={100} y={112} textAnchor="middle" fontSize={12} fill="#9CA3AF" fontFamily="'DM Sans',sans-serif">out of 100</text>
+    </svg>
+  );
+}
+
+// ─── ANIMATED BAR ─────────────────────────────────────────────────────────────
+function AnimBar({ val, color, delay = 0 }) {
+  const [w, setW] = useState(0);
+  useEffect(() => { const t = setTimeout(() => setW(val), delay); return () => clearTimeout(t); }, [val, delay]);
+  return (
+    <div style={{ height: 10, background: "#F3F4F6", borderRadius: 99, overflow: "hidden" }}>
+      <div style={{ height: "100%", background: color, borderRadius: 99, width: `${w}%`, transition: "width 1s cubic-bezier(.4,0,.2,1)" }} />
+    </div>
+  );
+}
+
+// ─── RADAR CHART (recharts) ───────────────────────────────────────────────────
+const CAT_META = [
+  { key: "skills",         label: "Skills",         color: "#4F46E5", icon: "⚡" },
+  { key: "certifications", label: "Certifications", color: "#06B6D4", icon: "🏅" },
+  { key: "projects",       label: "Projects",       color: "#8B5CF6", icon: "🚀" },
+  { key: "experience",     label: "Experience",     color: "#10B981", icon: "💼" },
+  { key: "resume",         label: "Resume",         color: "#F59E0B", icon: "📄" },
+];
+
+const CustomRadarTooltip = ({ active, payload }) => {
+  if (!active || !payload?.length) return null;
+  const d = payload[0];
+  const meta = CAT_META.find(c => c.label === d.payload.subject) || {};
+  return (
+    <div style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 12, padding: "10px 16px", boxShadow: "0 8px 32px rgba(0,0,0,0.12)", fontSize: 13 }}>
+      <div style={{ fontWeight: 700, color: "#111827", marginBottom: 4 }}>{meta.icon} {d.payload.subject}</div>
+      <div style={{ color: meta.color, fontWeight: 800, fontSize: 20 }}>{d.value}<span style={{ fontSize: 12, color: "#9CA3AF", fontWeight: 400 }}>/100</span></div>
+    </div>
+  );
+};
+
+function ScoreRadarChart({ breakdown }) {
+  const radarData = CAT_META.map(c => ({ subject: c.label, value: breakdown[c.key], fullMark: 100 }));
+  return (
+    <ResponsiveContainer width="100%" height={280}>
+      <RadarChart data={radarData} margin={{ top: 20, right: 30, bottom: 20, left: 30 }}>
+        <defs>
+          <linearGradient id="radar-fill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#4F46E5" stopOpacity={0.35} />
+            <stop offset="100%" stopColor="#06B6D4" stopOpacity={0.1} />
+          </linearGradient>
+        </defs>
+        <PolarGrid stroke="#E5E7EB" strokeDasharray="4 4" />
+        <PolarAngleAxis dataKey="subject"
+          tick={({ x, y, payload, cx, cy }) => {
+            const meta = CAT_META.find(c => c.label === payload.value);
+            const dx = x - cx, dy = y - cy;
+            const len = Math.sqrt(dx * dx + dy * dy) || 1;
+            const px = x + (dx / len) * 10, py = y + (dy / len) * 10;
+            return (
+              <text x={px} y={py} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#374151" fontFamily="'DM Sans',sans-serif">
+                {meta?.icon} {payload.value}
+              </text>
+            );
+          }}
+        />
+        <Radar dataKey="value" stroke="#4F46E5" strokeWidth={2.5} fill="url(#radar-fill)" dot={{ r: 5, fill: "#4F46E5", strokeWidth: 2, stroke: "#fff" }} />
+        <Tooltip content={<CustomRadarTooltip />} />
+      </RadarChart>
+    </ResponsiveContainer>
+  );
+}
+
+// ─── PAGE WRAPPER ─────────────────────────────────────────────────────────────
+function PageLayout({ step, children, accent, light, border }) {
+  const cfg = STEPS[step];
+  return (
+    <div key={step} style={{ animation: "slideIn .3s ease both", flex: 1, display: "flex", flexDirection: "column" }}>
+      <div style={{ height: 4, background: `linear-gradient(90deg, ${accent}, ${accent}88)` }} />
+      <div style={{ background: light, borderBottom: `1px solid ${border}`, padding: "28px 40px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <div style={{ width: 52, height: 52, borderRadius: 16, background: "#fff", border: `2px solid ${border}`,
+            display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, boxShadow: `0 2px 12px ${accent}20` }}>
+            {cfg.icon}
+          </div>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.5, color: accent, textTransform: "uppercase", marginBottom: 3 }}>Step {step + 1} of {STEPS.length}</div>
+            <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#111827", fontFamily: "'DM Serif Display', serif" }}>{cfg.label}</h2>
+          </div>
+        </div>
+      </div>
+      <div style={{ flex: 1, padding: "32px 40px", overflowY: "auto" }}>{children}</div>
+    </div>
+  );
+}
+
+// ─── STEP PAGES ───────────────────────────────────────────────────────────────
+function SkillsPage({ data, onChange }) {
+  const { accent, light, border } = STEPS[0];
+  const [techSel, setTechSel] = useState(""), [level, setLevel] = useState("Intermediate"), [softSel, setSoftSel] = useState("");
+  const levelCfg = { Beginner: { bg: "#FFFBEB", text: "#92400E", border: "#FDE68A" }, Intermediate: { bg: "#EEF2FF", text: "#3730A3", border: "#C7D2FE" }, Advanced: { bg: "#ECFDF5", text: "#065F46", border: "#A7F3D0" } };
+  const addTech = () => { if (!techSel || data.technical.find(s => s.name === techSel)) return; onChange({ ...data, technical: [...data.technical, { name: techSel, level }] }); setTechSel(""); };
+  const addSoft = () => { if (!softSel || data.soft.includes(softSel)) return; onChange({ ...data, soft: [...data.soft, softSel] }); setSoftSel(""); };
+  return (
+    <PageLayout step={0} accent={accent} light={light} border={border}>
+      <div style={{ marginBottom: 32 }}>
+        <h3 style={{ fontSize: 15, fontWeight: 700, color: "#111827", marginBottom: 4 }}>💻 Technical Skills</h3>
+        <p style={{ fontSize: 13, color: "#6B7280", marginBottom: 18 }}>Select skills you know and set your proficiency level.</p>
+        <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <div style={{ flex: 1, minWidth: 180 }}>
+            <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#6B7280", letterSpacing: 1, textTransform: "uppercase", marginBottom: 7 }}>Pick a Skill</label>
+            <FSelect value={techSel} onChange={setTechSel} accent={accent}><option value="">Select skill…</option>{TECH_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}</FSelect>
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#6B7280", letterSpacing: 1, textTransform: "uppercase", marginBottom: 7 }}>Proficiency</label>
+            <div style={{ display: "flex", gap: 6 }}>
+              {Object.keys(levelCfg).map(l => <button key={l} onClick={() => setLevel(l)} style={{ padding: "11px 16px", borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: "pointer", border: `1.5px solid ${level === l ? levelCfg[l].border : "#E5E7EB"}`, background: level === l ? levelCfg[l].bg : "#fff", color: level === l ? levelCfg[l].text : "#9CA3AF", transition: "all .15s" }}>{l}</button>)}
+            </div>
+          </div>
+          <AddButton onClick={addTech} accent={accent}>+ Add Skill</AddButton>
+        </div>
+        <div style={{ minHeight: 48 }}>{data.technical.length > 0 ? data.technical.map(sk => <Pill key={sk.name} label={sk.name} sub={sk.level} color={levelCfg[sk.level].text} bg={levelCfg[sk.level].bg} borderC={levelCfg[sk.level].border} onRemove={() => onChange({ ...data, technical: data.technical.filter(s => s.name !== sk.name) })} />) : <EmptyState icon="💻" text="No technical skills added yet" />}</div>
+      </div>
+      <div style={{ height: 1, background: "#F3F4F6", marginBottom: 28 }} />
+      <div>
+        <h3 style={{ fontSize: 15, fontWeight: 700, color: "#111827", marginBottom: 4 }}>🤝 Soft Skills</h3>
+        <p style={{ fontSize: 13, color: "#6B7280", marginBottom: 18 }}>Add interpersonal skills that employers value.</p>
+        <div style={{ display: "flex", gap: 10, marginBottom: 14, alignItems: "flex-end" }}>
+          <div style={{ flex: 1 }}>
+            <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#6B7280", letterSpacing: 1, textTransform: "uppercase", marginBottom: 7 }}>Pick a Soft Skill</label>
+            <FSelect value={softSel} onChange={setSoftSel} accent="#06B6D4"><option value="">Select skill…</option>{SOFT_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}</FSelect>
+          </div>
+          <AddButton onClick={addSoft} accent="#06B6D4">+ Add</AddButton>
+        </div>
+        <div style={{ minHeight: 48 }}>{data.soft.length > 0 ? data.soft.map(sk => <Pill key={sk} label={sk} color="#0E7490" bg="#ECFEFF" borderC="#A5F3FC" onRemove={() => onChange({ ...data, soft: data.soft.filter(s => s !== sk) })} />) : <EmptyState icon="🤝" text="No soft skills added yet" />}</div>
+      </div>
+    </PageLayout>
+  );
+}
+
+function CertsPage({ data, onChange }) {
+  const { accent, light, border } = STEPS[1];
+  const [form, setForm] = useState({ name: "", org: "", year: "" });
+  const add = () => { if (!form.name.trim()) return; onChange([...data, { ...form, id: Date.now() }]); setForm({ name: "", org: "", year: "" }); };
+  return (
+    <PageLayout step={1} accent={accent} light={light} border={border}>
+      <div style={{ background: "#fff", border: `1px solid ${border}`, borderRadius: 16, padding: "24px 28px", marginBottom: 24, boxShadow: `0 2px 16px ${accent}0f` }}>
+        <h3 style={{ fontSize: 15, fontWeight: 700, color: "#111827", marginBottom: 18 }}>Add a Certification</h3>
+        <FInput label="Certification Name" value={form.name} onChange={v => setForm({ ...form, name: v })} placeholder="e.g. AWS Certified Developer" accent={accent} />
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+          <FInput label="Issuing Organization" value={form.org} onChange={v => setForm({ ...form, org: v })} placeholder="e.g. Amazon" accent={accent} />
+          <FInput label="Year Completed" value={form.year} onChange={v => setForm({ ...form, year: v })} placeholder="2024" type="number" accent={accent} />
+        </div>
+        <AddButton onClick={add} accent={accent}>+ Add Certification</AddButton>
+      </div>
+      <h3 style={{ fontSize: 14, fontWeight: 700, color: "#374151", marginBottom: 14 }}>Added Certifications <span style={{ background: `${accent}18`, color: accent, padding: "2px 10px", borderRadius: 99, fontSize: 12, marginLeft: 6 }}>{data.length}</span></h3>
+      {data.length > 0 ? data.map(c => <ItemCard key={c.id} onRemove={() => onChange(data.filter(x => x.id !== c.id))}><div style={{ display: "flex", gap: 12, alignItems: "center" }}><div style={{ width: 38, height: 38, borderRadius: 10, background: light, border: `1px solid ${border}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>🏅</div><div><div style={{ fontWeight: 700, color: "#111827", fontSize: 14 }}>{c.name}</div><div style={{ fontSize: 12, color: "#6B7280", marginTop: 2 }}>{c.org}{c.year ? ` · ${c.year}` : ""}</div></div></div></ItemCard>) : <EmptyState icon="🏅" text="No certifications added yet. Add one above." />}
+    </PageLayout>
+  );
+}
+
+function ProjectsPage({ data, onChange }) {
+  const { accent, light, border } = STEPS[2];
+  const [form, setForm] = useState({ title: "", desc: "", tech: "", link: "" });
+  const add = () => { if (!form.title.trim()) return; onChange([...data, { ...form, id: Date.now() }]); setForm({ title: "", desc: "", tech: "", link: "" }); };
+  return (
+    <PageLayout step={2} accent={accent} light={light} border={border}>
+      <div style={{ background: "#fff", border: `1px solid ${border}`, borderRadius: 16, padding: "24px 28px", marginBottom: 24, boxShadow: `0 2px 16px ${accent}0f` }}>
+        <h3 style={{ fontSize: 15, fontWeight: 700, color: "#111827", marginBottom: 18 }}>Add a Project</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+          <FInput label="Project Title" value={form.title} onChange={v => setForm({ ...form, title: v })} placeholder="e.g. AI Resume Builder" accent={accent} />
+          <FInput label="Technologies Used" value={form.tech} onChange={v => setForm({ ...form, tech: v })} placeholder="React, Node.js…" accent={accent} />
+        </div>
+        <FTextarea label="Description" value={form.desc} onChange={v => setForm({ ...form, desc: v })} placeholder="What problem does it solve?" accent={accent} />
+        <FInput label="GitHub / Portfolio Link" value={form.link} onChange={v => setForm({ ...form, link: v })} placeholder="https://github.com/…" accent={accent} />
+        <AddButton onClick={add} accent={accent}>+ Add Project</AddButton>
+      </div>
+      <h3 style={{ fontSize: 14, fontWeight: 700, color: "#374151", marginBottom: 14 }}>Added Projects <span style={{ background: `${accent}18`, color: accent, padding: "2px 10px", borderRadius: 99, fontSize: 12, marginLeft: 6 }}>{data.length}</span></h3>
+      {data.length > 0
+        ? <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 14 }}>
+            {data.map(p => <div key={p.id} style={{ background: "#fff", border: `1px solid ${border}`, borderRadius: 14, padding: "18px 20px", position: "relative", animation: "fadeUp .25s ease both", boxShadow: `0 2px 12px ${accent}10` }}>
+              <button onClick={() => onChange(data.filter(x => x.id !== p.id))} style={{ position: "absolute", top: 10, right: 12, background: "none", border: "none", cursor: "pointer", color: "#9CA3AF", fontSize: 18 }}>×</button>
+              <div style={{ fontSize: 22, marginBottom: 8 }}>🚀</div>
+              <div style={{ fontWeight: 700, color: "#111827", fontSize: 14, marginBottom: 6, paddingRight: 20 }}>{p.title}</div>
+              {p.desc && <div style={{ fontSize: 12, color: "#6B7280", marginBottom: 10, lineHeight: 1.5 }}>{p.desc.slice(0, 90)}{p.desc.length > 90 ? "…" : ""}</div>}
+              {p.tech && <div style={{ marginBottom: 8 }}>{p.tech.split(",").slice(0, 3).map(t => <span key={t} style={{ display: "inline-block", padding: "3px 10px", borderRadius: 99, background: light, color: accent, fontSize: 11, fontWeight: 600, marginRight: 4, marginBottom: 4 }}>{t.trim()}</span>)}</div>}
+              {p.link && <a href={p.link} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: accent, fontWeight: 600 }}>🔗 View</a>}
+            </div>)}
+          </div>
+        : <EmptyState icon="🚀" text="No projects added yet. Add one above." />}
+    </PageLayout>
+  );
+}
+
+function ExperiencePage({ data, onChange }) {
+  const { accent, light, border } = STEPS[3];
+  const [form, setForm] = useState({ company: "", role: "", duration: "", desc: "" });
+  const add = () => { if (!form.company.trim()) return; onChange([...data, { ...form, id: Date.now() }]); setForm({ company: "", role: "", duration: "", desc: "" }); };
+  return (
+    <PageLayout step={3} accent={accent} light={light} border={border}>
+      <div style={{ background: "#fff", border: `1px solid ${border}`, borderRadius: 16, padding: "24px 28px", marginBottom: 24, boxShadow: `0 2px 16px ${accent}0f` }}>
+        <h3 style={{ fontSize: 15, fontWeight: 700, color: "#111827", marginBottom: 18 }}>Add Work Experience</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+          <FInput label="Company Name" value={form.company} onChange={v => setForm({ ...form, company: v })} placeholder="e.g. Google" accent={accent} />
+          <FInput label="Role / Title" value={form.role} onChange={v => setForm({ ...form, role: v })} placeholder="e.g. Software Engineer Intern" accent={accent} />
+        </div>
+        <FInput label="Duration" value={form.duration} onChange={v => setForm({ ...form, duration: v })} placeholder="Jun 2023 – Aug 2023" accent={accent} />
+        <FTextarea label="Key Contributions" value={form.desc} onChange={v => setForm({ ...form, desc: v })} placeholder="Describe your impact. Use numbers — e.g. 'Reduced latency by 40%'" accent={accent} />
+        <AddButton onClick={add} accent={accent}>+ Add Experience</AddButton>
+      </div>
+      <h3 style={{ fontSize: 14, fontWeight: 700, color: "#374151", marginBottom: 14 }}>Experience Timeline <span style={{ background: `${accent}18`, color: accent, padding: "2px 10px", borderRadius: 99, fontSize: 12, marginLeft: 6 }}>{data.length}</span></h3>
+      {data.length > 0
+        ? <div style={{ position: "relative", paddingLeft: 24 }}>
+            <div style={{ position: "absolute", left: 7, top: 8, bottom: 8, width: 2, background: `linear-gradient(to bottom, ${accent}, ${accent}30)`, borderRadius: 2 }} />
+            {data.map((e, i) => <div key={e.id} style={{ position: "relative", marginBottom: 16, animation: `fadeUp .25s ease ${i * 0.05}s both` }}>
+              <div style={{ position: "absolute", left: -20, top: 18, width: 12, height: 12, borderRadius: "50%", background: accent, border: "2.5px solid #fff", boxShadow: `0 0 0 3px ${accent}30` }} />
+              <div style={{ background: "#fff", border: `1px solid ${border}`, borderRadius: 14, padding: "16px 20px", boxShadow: `0 2px 10px ${accent}0a` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 8 }}>
+                  <div><div style={{ fontWeight: 700, fontSize: 15, color: "#111827" }}>{e.role}</div><div style={{ fontSize: 13, color: accent, fontWeight: 600, marginTop: 2 }}>{e.company}</div></div>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    {e.duration && <span style={{ background: light, color: accent, border: `1px solid ${border}`, padding: "4px 12px", borderRadius: 99, fontSize: 12, fontWeight: 600 }}>📅 {e.duration}</span>}
+                    <button onClick={() => onChange(data.filter(x => x.id !== e.id))} style={{ background: "none", border: "none", cursor: "pointer", color: "#9CA3AF", fontSize: 18, lineHeight: 1 }}>×</button>
+                  </div>
+                </div>
+                {e.desc && <div style={{ fontSize: 13, color: "#4B5563", marginTop: 10, lineHeight: 1.6, borderTop: `1px solid ${border}`, paddingTop: 10 }}>{e.desc}</div>}
+              </div>
+            </div>)}
+          </div>
+        : <EmptyState icon="💼" text="No experience added yet. Add one above." />}
+    </PageLayout>
+  );
+}
+
+function ResumePage({ data, onChange }) {
+  const { accent, light, border } = STEPS[4];
+  const fields = [
+    { key: "education",  icon: "🎓", label: "Education",          desc: "Degree, institution, GPA, graduation year" },
+    { key: "skills",     icon: "⚡", label: "Skills Section",      desc: "Technical & soft skills clearly listed" },
+    { key: "experience", icon: "💼", label: "Work Experience",     desc: "Internships, part-time or full-time roles" },
+    { key: "projects",   icon: "🚀", label: "Projects",            desc: "At least 2 projects with descriptions & links" },
+    { key: "contact",    icon: "📬", label: "Contact Information", desc: "Email, phone, LinkedIn, GitHub" },
+  ];
+  const done = Object.values(data).filter(Boolean).length;
+  const pct = Math.round((done / fields.length) * 100);
+  return (
+    <PageLayout step={4} accent={accent} light={light} border={border}>
+      <p style={{ fontSize: 14, color: "#6B7280", marginBottom: 24 }}>Check off each section that's complete in your resume.</p>
+      <div style={{ background: "#fff", border: `1px solid ${border}`, borderRadius: 14, padding: "18px 22px", marginBottom: 24 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10, alignItems: "center" }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: "#374151" }}>Completeness</span>
+          <span style={{ fontSize: 20, fontWeight: 800, color: pct === 100 ? "#10B981" : accent }}>{pct}%</span>
+        </div>
+        <div style={{ height: 10, background: "#F3F4F6", borderRadius: 99, overflow: "hidden" }}>
+          <div style={{ height: "100%", background: pct === 100 ? "#10B981" : accent, borderRadius: 99, width: `${pct}%`, transition: "width .5s ease" }} />
+        </div>
+        <div style={{ fontSize: 12, color: "#9CA3AF", marginTop: 8 }}>{done} of {fields.length} sections complete</div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {fields.map((f, i) => (
+          <div key={f.key} onClick={() => onChange({ ...data, [f.key]: !data[f.key] })}
+            style={{ display: "flex", alignItems: "center", gap: 16, padding: "16px 20px", borderRadius: 14, cursor: "pointer",
+              background: data[f.key] ? "#F0FDF4" : "#fff", border: `1.5px solid ${data[f.key] ? "#86EFAC" : "#E5E7EB"}`, transition: "all .2s", animation: `fadeUp .3s ease ${i * 0.06}s both` }}>
+            <div style={{ width: 26, height: 26, borderRadius: 8, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+              background: data[f.key] ? "#10B981" : "#fff", border: `2px solid ${data[f.key] ? "#10B981" : "#D1D5DB"}`, boxShadow: data[f.key] ? "0 0 0 3px #D1FAE5" : "none", transition: "all .2s" }}>
+              {data[f.key] && <svg width="13" height="13" viewBox="0 0 13 13"><path d="M2 6.5L5 9.5L11 3.5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+            </div>
+            <div style={{ width: 36, height: 36, borderRadius: 10, background: data[f.key] ? "#DCFCE7" : "#F9FAFB", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>{f.icon}</div>
+            <div style={{ flex: 1 }}><div style={{ fontWeight: 700, fontSize: 14, color: data[f.key] ? "#065F46" : "#111827" }}>{f.label}</div><div style={{ fontSize: 12, color: "#6B7280", marginTop: 2 }}>{f.desc}</div></div>
+            {data[f.key] && <span style={{ color: "#10B981", fontWeight: 700, fontSize: 12, background: "#DCFCE7", padding: "4px 12px", borderRadius: 99 }}>✓ Done</span>}
+          </div>
+        ))}
+      </div>
+    </PageLayout>
+  );
+}
+
+// ─── RESULT PAGE ──────────────────────────────────────────────────────────────
+function ResultPage({ score, data, onRestart }) {
+  const [activeTab, setActiveTab] = useState("radar");
+  const tier = score.total <= 40
+    ? { label: "Needs Improvement", color: "#EF4444", bg: "#FEF2F2", icon: "📈" }
+    : score.total <= 70
+    ? { label: "Moderate Readiness", color: "#F59E0B", bg: "#FFFBEB", icon: "⚡" }
+    : { label: "Job Ready!", color: "#10B981", bg: "#ECFDF5", icon: "🎉" };
+
+  const suggestions = getSuggestions(data, score.breakdown);
+
+  return (
+    <div style={{ animation: "slideIn .35s ease both", flex: 1, display: "flex", flexDirection: "column" }}>
+      <div style={{ height: 4, background: "linear-gradient(90deg,#4F46E5,#8B5CF6,#06B6D4)" }} />
+      <div style={{ flex: 1, overflowY: "auto", padding: "36px 40px", background: "#F8F9FF" }}>
+
+        {/* ── Hero banner ── */}
+        <div style={{ background: "linear-gradient(135deg,#1E1B4B 0%,#4F46E5 45%,#06B6D4 100%)", borderRadius: 24, padding: "40px 44px", color: "#fff", marginBottom: 28, position: "relative", overflow: "hidden" }}>
+          {/* Decorative blobs */}
+          <div style={{ position: "absolute", top: -40, right: -40, width: 220, height: 220, borderRadius: "50%", background: "rgba(255,255,255,0.06)" }} />
+          <div style={{ position: "absolute", bottom: -60, right: 80, width: 160, height: 160, borderRadius: "50%", background: "rgba(255,255,255,0.04)" }} />
+
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 28, position: "relative" }}>
+            {/* Left: donut + tier */}
+            <div style={{ textAlign: "center" }}>
+              <DonutChart score={score.total} />
+              <div style={{ display: "inline-block", marginTop: 12, padding: "8px 22px", borderRadius: 99, background: tier.bg, color: tier.color, fontWeight: 800, fontSize: 14 }}>
+                {tier.icon} {tier.label}
+              </div>
+            </div>
+
+            {/* Right: summary stats */}
+            <div style={{ flex: 1, minWidth: 240 }}>
+              <div style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", opacity: .6, marginBottom: 8 }}>Career Readiness</div>
+              <h1 style={{ fontSize: 38, fontWeight: 900, margin: "0 0 6px", fontFamily: "'DM Serif Display',serif" }}>Score Breakdown</h1>
+              <p style={{ opacity: .7, fontSize: 14, marginBottom: 24, lineHeight: 1.6 }}>Based on your skills, certifications, projects, experience, and resume completeness.</p>
+              {/* Mini stat pills */}
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+                {CAT_META.map(c => (
+                  <div key={c.key} style={{ background: "rgba(255,255,255,0.12)", backdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.18)", borderRadius: 12, padding: "10px 16px", minWidth: 100 }}>
+                    <div style={{ fontSize: 11, opacity: .65, marginBottom: 4 }}>{c.icon} {c.label}</div>
+                    <div style={{ fontSize: 22, fontWeight: 800 }}>{score.breakdown[c.key]}<span style={{ fontSize: 11, opacity: .5 }}>/100</span></div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Chart + bars section ── */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 }}>
+
+          {/* Chart card with tabs */}
+          <div style={{ background: "#fff", borderRadius: 20, border: "1px solid #E5E7EB", boxShadow: "0 2px 20px rgba(79,70,229,0.07)", overflow: "hidden" }}>
+            {/* Tab bar */}
+            <div style={{ display: "flex", borderBottom: "1px solid #F3F4F6", padding: "0 20px" }}>
+              {[{ id: "radar", label: "🕸 Radar" }, { id: "bars", label: "📊 Bars" }].map(t => (
+                <button key={t.id} onClick={() => setActiveTab(t.id)}
+                  style={{ padding: "14px 20px", fontSize: 13, fontWeight: 700, border: "none", background: "none", cursor: "pointer",
+                    color: activeTab === t.id ? "#4F46E5" : "#9CA3AF",
+                    borderBottom: `2.5px solid ${activeTab === t.id ? "#4F46E5" : "transparent"}`,
+                    transition: "all .2s", marginBottom: -1 }}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            <div style={{ padding: "20px 24px" }}>
+              {activeTab === "radar" && (
+                <div style={{ animation: "fadeUp .3s ease both" }}>
+                  <ScoreRadarChart breakdown={score.breakdown} />
+                  <p style={{ fontSize: 12, color: "#9CA3AF", textAlign: "center", marginTop: 4 }}>Hover over points for detail</p>
+                </div>
+              )}
+
+              {activeTab === "bars" && (
+                <div style={{ animation: "fadeUp .3s ease both" }}>
+                  {CAT_META.map((c, i) => (
+                    <div key={c.key} style={{ marginBottom: 20 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ fontSize: 16 }}>{c.icon}</span>
+                          <span style={{ fontSize: 13, fontWeight: 600, color: "#374151" }}>{c.label}</span>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ fontSize: 13, fontWeight: 800, color: c.color }}>{score.breakdown[c.key]}</span>
+                          <div style={{ width: 28, height: 28, borderRadius: 8, background: `${c.color}18`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            <svg width="10" height="10" viewBox="0 0 10 10">
+                              <circle cx="5" cy="5" r="4" fill={c.color} opacity={score.breakdown[c.key] >= 70 ? 1 : 0.4} />
+                            </svg>
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{ height: 14, background: "#F3F4F6", borderRadius: 99, overflow: "hidden", position: "relative" }}>
+                        {/* Segment markers */}
+                        {[25, 50, 75].map(m => (
+                          <div key={m} style={{ position: "absolute", left: `${m}%`, top: 0, height: "100%", width: 1, background: "#fff", zIndex: 1 }} />
+                        ))}
+                        <AnimBar val={score.breakdown[c.key]} color={`linear-gradient(90deg, ${c.color}cc, ${c.color})`} delay={i * 100} />
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4, fontSize: 10, color: "#D1D5DB" }}>
+                        <span>0</span><span>25</span><span>50</span><span>75</span><span>100</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Suggestions */}
+          <div style={{ background: "#fff", borderRadius: 20, border: "1px solid #E5E7EB", boxShadow: "0 2px 20px rgba(79,70,229,0.07)", padding: "24px 26px" }}>
+            <h3 style={{ margin: "0 0 6px", fontSize: 16, fontWeight: 800, color: "#111827" }}>💡 Improvement Tips</h3>
+            <p style={{ fontSize: 13, color: "#9CA3AF", marginBottom: 20 }}>Actionable steps to boost your score</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {suggestions.map((s, i) => (
+                <div key={i} style={{ display: "flex", gap: 14, padding: "14px 16px", background: "#F9FAFB", borderRadius: 14,
+                  border: `1px solid ${s.color}22`, animation: `fadeUp .4s ease ${i * 0.07}s both`,
+                  borderLeft: `4px solid ${s.color}` }}>
+                  <span style={{ fontSize: 22, flexShrink: 0 }}>{s.icon}</span>
+                  <span style={{ fontSize: 13, color: "#374151", lineHeight: 1.6 }}>{s.text}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Overall grade */}
+            <div style={{ marginTop: 24, padding: "16px", borderRadius: 14, background: `linear-gradient(135deg, #4F46E508, #06B6D408)`, border: "1px dashed #C7D2FE", textAlign: "center" }}>
+              <div style={{ fontSize: 12, color: "#6B7280", marginBottom: 6 }}>Overall Grade</div>
+              <div style={{ fontSize: 48, fontWeight: 900, color: "#4F46E5", lineHeight: 1 }}>
+                {score.total >= 90 ? "A+" : score.total >= 80 ? "A" : score.total >= 70 ? "B+" : score.total >= 60 ? "B" : score.total >= 50 ? "C" : "D"}
+              </div>
+              <div style={{ fontSize: 12, color: "#9CA3AF", marginTop: 4 }}>Career Readiness Index</div>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ textAlign: "center" }}>
+          <NavButton onClick={onRestart} variant="ghost">← Retake Assessment</NavButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── SIDEBAR ──────────────────────────────────────────────────────────────────
+function Sidebar({ currentStep, data, onStepClick, isResult }) {
+  const completion = [
+    data.skills.technical.length > 0 || data.skills.soft.length > 0,
+    data.certifications.length > 0,
+    data.projects.length > 0,
+    data.experience.length > 0,
+    Object.values(data.resume).some(Boolean),
+  ];
+  return (
+    <div style={{ width: 240, background: "#fff", borderRight: "1px solid #E5E7EB", display: "flex", flexDirection: "column", flexShrink: 0 }}>
+      <div style={{ padding: "24px 24px 20px", borderBottom: "1px solid #F3F4F6" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ width: 34, height: 34, borderRadius: 10, background: "linear-gradient(135deg,#4F46E5,#06B6D4)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>🎯</div>
+          <div><div style={{ fontSize: 13, fontWeight: 800, color: "#111827" }}>CareerReady</div><div style={{ fontSize: 11, color: "#9CA3AF" }}>Assessment</div></div>
+        </div>
+      </div>
+      <div style={{ flex: 1, padding: "16px 12px" }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: "#9CA3AF", letterSpacing: 1.5, textTransform: "uppercase", padding: "0 12px", marginBottom: 10 }}>Sections</div>
+        {STEPS.map((s, i) => {
+          const isActive = currentStep === i && !isResult, isDone = completion[i];
+          return (
+            <button key={s.id} onClick={() => !isResult && onStepClick(i)}
+              style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", borderRadius: 10, border: "none", cursor: isResult ? "default" : "pointer",
+                background: isActive ? `${s.accent}12` : "transparent", marginBottom: 2, textAlign: "left", transition: "all .15s" }}>
+              <div style={{ width: 28, height: 28, borderRadius: 9, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+                background: isDone ? s.accent : isActive ? `${s.accent}18` : "#F3F4F6",
+                color: isDone ? "#fff" : isActive ? s.accent : "#9CA3AF", fontWeight: 700, fontSize: 12, transition: "all .2s" }}>
+                {isDone ? "✓" : i + 1}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: isActive ? 700 : 600, color: isActive ? s.accent : isDone ? "#374151" : "#6B7280", transition: "color .15s" }}>{s.label}</div>
+                <div style={{ fontSize: 11, color: "#9CA3AF", marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.desc}</div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ padding: "16px 20px", borderTop: "1px solid #F3F4F6" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+          <span style={{ fontSize: 11, color: "#6B7280", fontWeight: 600 }}>Overall Progress</span>
+          <span style={{ fontSize: 11, fontWeight: 700, color: "#4F46E5" }}>{completion.filter(Boolean).length}/{STEPS.length}</span>
+        </div>
+        <div style={{ height: 6, background: "#F3F4F6", borderRadius: 99, overflow: "hidden" }}>
+          <div style={{ height: "100%", background: "linear-gradient(90deg,#4F46E5,#06B6D4)", borderRadius: 99, width: `${(completion.filter(Boolean).length / STEPS.length) * 100}%`, transition: "width .5s ease" }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BottomNav({ step, total, onBack, onNext, onSubmit, isLast, accent }) {
+  return (
+    <div style={{ background: "#fff", borderTop: "1px solid #E5E7EB", padding: "16px 40px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+      <div>{step > 0 ? <NavButton onClick={onBack} variant="ghost">← Back</NavButton> : <div />}</div>
+      <div style={{ fontSize: 13, color: "#9CA3AF" }}>Step {step + 1} of {total}</div>
+      <div>{isLast ? <NavButton onClick={onSubmit} accent="#10B981">Calculate My Score →</NavButton> : <NavButton onClick={onNext} accent={accent}>Next →</NavButton>}</div>
+    </div>
+  );
+}
+
+// ─── APP ─────────────────────────────────────────────────────────────────────
+export default function App() {
+  const [step, setStep] = useState(0);
+  const [data, setData] = useState(EMPTY);
+  const [result, setResult] = useState(null);
+  const isResult = !!result;
+
+  const pages = [
+    <SkillsPage     data={data.skills}        onChange={v => setData({ ...data, skills: v })} />,
+    <CertsPage      data={data.certifications} onChange={v => setData({ ...data, certifications: v })} />,
+    <ProjectsPage   data={data.projects}       onChange={v => setData({ ...data, projects: v })} />,
+    <ExperiencePage data={data.experience}     onChange={v => setData({ ...data, experience: v })} />,
+    <ResumePage     data={data.resume}         onChange={v => setData({ ...data, resume: v })} />,
+  ];
+
+  return (
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@300;400;500;600;700;800;900&display=swap');
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body, #root { height: 100%; }
+        body { font-family: 'DM Sans', sans-serif; color: #111827; background: #F9FAFB; }
+        select option { background: #fff; color: #111827; }
+        ::placeholder { color: #C4C9D4; }
+        ::-webkit-scrollbar { width: 5px; }
+        ::-webkit-scrollbar-thumb { background: #E5E7EB; border-radius: 3px; }
+        input:focus, textarea:focus, select:focus { outline: none; }
+        @keyframes fadeUp  { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+        @keyframes slideIn { from { opacity:0; transform:translateX(16px); } to { opacity:1; transform:translateX(0); } }
+      `}</style>
+      <div style={{ display: "flex", height: "100vh", overflow: "hidden" }}>
+        <Sidebar currentStep={step} data={data} onStepClick={setStep} isResult={isResult} />
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: "#F9FAFB" }}>
+          {/* top stripe */}
+          <div style={{ height: 4, background: isResult ? "linear-gradient(90deg,#4F46E5,#06B6D4)" : `linear-gradient(90deg,${STEPS[step].accent},${STEPS[step].accent}88)`, flexShrink: 0 }} />
+          <div style={{ flex: 1, overflowY: "auto" }}>
+            {isResult
+              ? <ResultPage score={result} data={data} onRestart={() => { setResult(null); setStep(0); }} />
+              : pages[step]}
+          </div>
+          {!isResult && (
+            <BottomNav step={step} total={STEPS.length}
+              onBack={() => setStep(s => Math.max(0, s - 1))}
+              onNext={() => setStep(s => Math.min(STEPS.length - 1, s + 1))}
+              onSubmit={() => setResult(computeScore(data))}
+              isLast={step === STEPS.length - 1}
+              accent={STEPS[step].accent} />
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
